@@ -61,10 +61,10 @@
          [buffer (make-bytevector (* pair-count 8))])
     (for-each
       (lambda (pair i)
-        (unless (and (list? pair) (= 2 (length pair)))
+        (unless (and (pair? pair) (not (pair? (cdr pair))))
           (error 'dump-pairs (format "invalid pair at index ~d: ~s" i pair)))
         (bytevector-u32-set! buffer (* i 8) (car pair) (endianness little))
-        (bytevector-u32-set! buffer (+ (* i 8) 4) (cadr pair) (endianness little)))
+        (bytevector-u32-set! buffer (+ (* i 8) 4) (cdr pair) (endianness little)))
       pairs (iota pair-count))
 
     (call-with-port
@@ -95,7 +95,7 @@
                 (if (>= (* i 8) file-size)
                   (reverse pairs)
                   (loop (+ i 1)
-                        (cons (list (bytevector-u32-ref buffer
+                        (cons (cons (bytevector-u32-ref buffer
                                                         (* i 8)
                                                         (endianness little))
                                     (bytevector-u32-ref buffer
@@ -112,22 +112,22 @@
       (let ([pair (vector-ref pair-vector token)])
         (unless (= token (car pair))
           (fprintf port "  ~d -> ~d\n" token (car pair))
-          (fprintf port "  ~d -> ~d\n" token (cadr pair))))))
+          (fprintf port "  ~d -> ~d\n" token (cdr pair))))))
   (display "}\n" port))
 
 (define (process-tokens tokens freqs)
   (oht-clear! freqs)
   (let loop ([prev (car tokens)] [remaining (cdr tokens)])
     (unless (null? remaining)
-      (oht-update! freqs (list prev (car remaining)) add1 0)
+      (oht-update! freqs (cons prev (car remaining)) add1 0)
       (loop (car remaining) (cdr remaining)))))
 
 (define (find-max-freq freqs)
-  (let ([max-freq (list '() 0)])
+  (let ([max-freq (cons '() 0)])
     (for-each
       (lambda (key value)
-        (when (> value (cadr max-freq))
-          (set! max-freq (list key value))))
+        (when (> value (cdr max-freq))
+          (set! max-freq (cons key value))))
       (oht-keys freqs) (oht-values freqs))
     max-freq))
 
@@ -137,7 +137,7 @@
       [(null? remaining) (reverse acc)]
       [(null? (cdr remaining)) (reverse (cons (car remaining) acc))]
       [else
-        (let ([pair (list (car remaining) (cadr remaining))])
+        (let ([pair (cons (car remaining) (cadr remaining))])
           (if (equal? pair max-pair)
             (process (cddr remaining) (cons new-token acc))
             (process (cdr remaining) (cons (car remaining) acc))))])))
@@ -150,7 +150,7 @@
          [output-path (cadr args)]
          [text (call-with-input-file input-path get-string-all)]
          [freqs (make-ordered-hashtable equal-hash equal?)]
-         [pairs (reverse (map (lambda (n) (list n 0)) (iota 256)))]
+         [pairs (reverse (map (lambda (n) (cons n 0)) (iota 256)))]
          [tokens-in (map char->integer (string->list text))])
     (printf "Info: processing ~d initial tokens...\n" (length tokens-in))
     (call/cc
@@ -158,7 +158,7 @@
         (let loop ([iteration 0])
           (process-tokens tokens-in freqs)
           (let ([max-freq (find-max-freq freqs)])
-            (when (<= (cadr max-freq) 1) (break))
+            (when (<= (cdr max-freq) 1) (break))
 
             (set! pairs (cons (car max-freq) pairs))
             (set! tokens-in (replace-tokens tokens-in (car max-freq)
@@ -189,7 +189,7 @@
 (define (render-token pair-vector token port)
   (let* ([pair (vector-ref pair-vector token)]
          [left (car pair)]
-         [right (cadr pair)])
+         [right (cdr pair)])
     (if (= token left)
       (display (integer->char token) port)
       (begin
