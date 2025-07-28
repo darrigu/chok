@@ -1,10 +1,52 @@
 #!/usr/bin/env scheme-script
 (import (chezscheme))
 
+(define-record-type ordered-hashtable
+  (fields
+   ht
+   (mutable order)
+   (mutable length))
+  (protocol
+   (lambda (new)
+     (lambda (hash-function equiv-function)
+       (new (make-hashtable hash-function equiv-function) '() 0)))))
+
+(define (oht-get oht key . default)
+  (if (hashtable-contains? (ordered-hashtable-ht oht) key)
+    (hashtable-ref (ordered-hashtable-ht oht) key #f)
+    (if (null? default)
+      (error 'oht-get "key not found and no default value provided")
+      (car default))))
+
+(define (oht-set! oht key value)
+  (let ([ht (ordered-hashtable-ht oht)])
+    (unless (hashtable-contains? ht key)
+      (ordered-hashtable-order-set! oht (cons key (ordered-hashtable-order oht)))
+      (ordered-hashtable-length-set! oht (+ (ordered-hashtable-length oht) 1)))
+    (hashtable-set! ht key value)))
+
+(define (oht-update! oht key proc . default)
+  (let* ([current-value (apply oht-get oht key default)]
+         [new-value (proc current-value)])
+    (oht-set! oht key new-value)
+    new-value))
+
+(define (oht-keys oht)
+  (reverse (ordered-hashtable-order oht)))
+
+(define (oht-values oht)
+  (map (lambda (key) (oht-get oht key #f)) (oht-keys oht)))
+
+(define (oht-clear! oht)
+  (hashtable-clear! (ordered-hashtable-ht oht))
+  (ordered-hashtable-order-set! oht '())
+  (ordered-hashtable-length-set! oht 0))
+
 (define (usage port)
   (display "Usage:\n" port)
   (display "  chok from-txt <input.txt> <output.chok>\n" port)
-  (display "  chok to-dot <input.chok> <output.dot>\n" port))
+  (display "  chok to-dot <input.chok> <output.dot>\n" port)
+  (display "  chok inspect <input.chok>\n" port))
 
 (define (validate-args args min-count error-message)
   (when (< (length args) min-count)
@@ -74,20 +116,19 @@
   (display "}\n" port))
 
 (define (process-tokens tokens freqs)
-  (hashtable-clear! freqs)
+  (oht-clear! freqs)
   (let loop ([prev (car tokens)] [remaining (cdr tokens)])
     (unless (null? remaining)
-      (hashtable-update! freqs (list prev (car remaining)) add1 0)
+      (oht-update! freqs (list prev (car remaining)) add1 0)
       (loop (car remaining) (cdr remaining)))))
 
 (define (find-max-freq freqs)
   (let ([max-freq (list '() 0)])
-    (let-values ([(keys values) (hashtable-entries freqs)])
-      (vector-for-each
-        (lambda (key value)
-          (when (> value (cadr max-freq))
-            (set! max-freq (list key value))))
-        keys values))
+    (for-each
+      (lambda (key value)
+        (when (> value (cadr max-freq))
+          (set! max-freq (list key value))))
+      (oht-keys freqs) (oht-values freqs))
     max-freq))
 
 (define (replace-tokens tokens max-pair new-token)
@@ -108,7 +149,7 @@
   (let* ([input-path (car args)]
          [output-path (cadr args)]
          [text (call-with-input-file input-path get-string-all)]
-         [freqs (make-hashtable equal-hash equal?)]
+         [freqs (make-ordered-hashtable equal-hash equal?)]
          [pairs (reverse (map (lambda (n) (list n 0)) (iota 256)))]
          [tokens-in (map char->integer (string->list text))])
     (printf "Info: processing ~d initial tokens...\n" (length tokens-in))
@@ -145,6 +186,34 @@
         (render-dot (load-pairs input-path) port)))
     (printf "Info: generated dot file ~a~%" output-path)))
 
+(define (render-token pair-vector token port)
+  (let* ([pair (vector-ref pair-vector token)]
+         [left (car pair)]
+         [right (cadr pair)])
+    (if (= token left)
+      (display (integer->char token) port)
+      (begin
+        (render-token pair-vector left port)
+        (render-token pair-vector right port)))))
+
+(define (main-inspect args)
+  (validate-args args 1 "no input path was provided")
+
+  (let* ([pairs (load-pairs (car args))]
+         [pair-vector (list->vector (reverse pairs))]
+         [str (open-output-string)])
+    (do ([token 1 (+ token 1)])
+        ((>= token (length pairs)))
+      (printf "~d => |" token)
+      (render-token pair-vector token str)
+      (string-for-each
+        (lambda (char)
+          (if (char>=? char #\space)
+            (display char)
+            (printf "\\x~2,'0x" (char->integer char))))
+        (get-output-string str))
+      (display "|\n"))))
+
 (define (main args)
   (validate-args args 1 "no command was provided")
 
@@ -158,6 +227,7 @@
       (case command
         ("from-txt" (main-from-txt (cdr args)))
         ("to-dot" (main-to-dot (cdr args)))
+        ("inspect" (main-inspect (cdr args)))
         (else
           (usage (current-error-port))
           (error 'chok (format "unknown command '~a'" command)))))))
