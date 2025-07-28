@@ -217,19 +217,19 @@
 (define (main args)
   (validate-args args 1 "no command was provided")
 
-  (guard (ex
-           ((and (error? ex)
-                 (eq? (condition-who ex) 'chok))
-            (fprintf (current-error-port) "Error: ~a~%" (condition-message ex))
-            (exit 1))
-           (else (raise ex)))
-    (let ([command (car args)])
-      (case command
-        ("from-txt" (main-from-txt (cdr args)))
-        ("to-dot" (main-to-dot (cdr args)))
-        ("inspect" (main-inspect (cdr args)))
-        (else
-          (usage (current-error-port))
-          (error 'chok (format "unknown command '~a'" command)))))))
+  (let ([command (car args)])
+    (case command
+      ("from-txt" (main-from-txt (cdr args)))
+      ("to-dot" (main-to-dot (cdr args)))
+      ("inspect" (main-inspect (cdr args)))
+      (else
+        (usage (current-error-port))
+        (error 'chok (format "unknown command '~a'" command))))))
 
-(main (cdr (command-line)))
+(guard (ex
+         ((and (error? ex)
+               (eq? (condition-who ex) 'chok))
+          (fprintf (current-error-port) "Error: ~a~%" (condition-message ex))
+          (exit 1))
+         (else (raise ex)))
+  (main (cdr (command-line))))
